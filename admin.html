@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"/>
+<title>Админка</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import {
+    getFirestore, collection, addDoc, getDocs, deleteDoc, doc, serverTimestamp, query, orderBy
+  } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  // ─── Та же Firebase конфигурация ────────────
+  const firebaseConfig = {
+    apiKey:            "YOUR_API_KEY",
+    authDomain:        "YOUR_PROJECT.firebaseapp.com",
+    projectId:         "YOUR_PROJECT_ID",
+    storageBucket:     "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "YOUR_SENDER_ID",
+    appId:             "YOUR_APP_ID"
+  };
+  // ─── ID администраторов ─────────────────────
+  const ADMIN_IDS = ["123456789"];  // Добавьте свои Telegram ID
+  // ────────────────────────────────────────────
+
+  const appFB = initializeApp(firebaseConfig);
+  const db    = getFirestore(appFB);
+
+  const tg     = window.Telegram.WebApp;
+  tg.expand();
+  tg.setHeaderColor("#0f0f0f");
+
+  const tgUser = tg.initDataUnsafe?.user || { id: 0, first_name: "Dev" };
+  const userId = String(tgUser.id);
+
+  // Access guard
+  if (!ADMIN_IDS.includes(userId) && userId !== "0") {
+    document.body.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100dvh;
+        font-family:system-ui;color:#f87171;font-size:18px;text-align:center;padding:24px;">
+        🚫 Доступ запрещён.<br>Эта страница только для администраторов.
+      </div>`;
+  }
+
+  let products = [];
+
+  async function loadProducts() {
+    const q = query(collection(db, "products"), orderBy("created_at", "desc"));
+    const snap = await getDocs(q);
+    products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderList();
+    updateCount();
+  }
+
+  async function addProduct() {
+    const nameEl  = document.getElementById("inp-name");
+    const priceEl = document.getElementById("inp-price");
+    const emojiEl = document.getElementById("inp-emoji");
+
+    const name  = nameEl.value.trim();
+    const price = parseFloat(priceEl.value);
+    const emoji = emojiEl.value.trim() || "📦";
+
+    if (!name)             return shake(nameEl,  "Введите название");
+    if (!price || price<1) return shake(priceEl, "Введите корректную цену");
+
+    const btn = document.getElementById("btn-add");
+    btn.disabled = true;
+    btn.textContent = "Добавляю…";
+
+    try {
+      await addDoc(collection(db, "products"), {
+        name, price, emoji,
+        created_at: serverTimestamp()
+      });
+      nameEl.value = ""; priceEl.value = ""; emojiEl.value = "";
+      await loadProducts();
+      showToast("✅ Товар добавлен");
+    } catch(e) {
+      showToast("⚠️ Ошибка: " + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = "+ Добавить товар";
+  }
+
+  async function removeProduct(id) {
+    if (!confirm("Удалить этот товар?")) return;
+    try {
+      await deleteDoc(doc(db, "products", id));
+      await loadProducts();
+      showToast("🗑 Товар удалён");
+    } catch(e) { showToast("Ошибка: " + e.message); }
+  }
+
+  function renderList() {
+    const list = document.getElementById("product-list");
+    if (!products.length) {
+      list.innerHTML = `<div class="empty">Товаров нет. Добавьте первый!</div>`;
+      return;
+    }
+    list.innerHTML = products.map(p => `
+      <div class="item">
+        <div class="item-emoji">${p.emoji || "📦"}</div>
+        <div class="item-info">
+          <div class="item-name">${esc(p.name)}</div>
+          <div class="item-price">${fmt(p.price)} ₽</div>
+        </div>
+        <button class="btn-del" onclick="window._remove('${p.id}')">✕</button>
+      </div>`).join("");
+  }
+
+  function updateCount() {
+    document.getElementById("count").textContent = products.length + " товар(ов)";
+  }
+
+  function shake(el, msg) {
+    el.classList.add("shake");
+    el.placeholder = msg;
+    setTimeout(() => { el.classList.remove("shake"); el.placeholder = el.dataset.ph || ""; }, 600);
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2500);
+  }
+
+  function fmt(n) { return Number(n).toLocaleString("ru-RU"); }
+  function esc(s) { return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+  window._remove  = removeProduct;
+  window._addProd = addProduct;
+
+  (async () => {
+    document.getElementById("loader").style.display = "flex";
+    try { await loadProducts(); } catch(e) { console.error(e); }
+    document.getElementById("loader").style.display = "none";
+    document.getElementById("app").style.display    = "flex";
+  })();
+</script>
+
+<style>
+:root {
+  --bg:      #0f0f0f;
+  --surface: #1a1a1a;
+  --border:  #2a2a2a;
+  --accent:  #5b9cf6;
+  --green:   #4ade80;
+  --red:     #f87171;
+  --text:    #f0f0f0;
+  --muted:   #888;
+  --r:       12px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; font-size: 15px; }
+
+#loader {
+  position: fixed; inset: 0; background: var(--bg);
+  display: flex; align-items: center; justify-content: center; z-index: 99;
+}
+.spin { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#app { display: none; flex-direction: column; height: 100dvh; overflow: hidden; }
+
+.header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 14px 16px; display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+}
+.header-icon { font-size: 22px; }
+.header-title { font-size: 17px; font-weight: 700; }
+.header-badge {
+  margin-left: auto; background: var(--accent); color: #fff;
+  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
+}
+
+.scroll { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; }
+.panel-title { font-size: 12px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--muted); margin-bottom: 14px; }
+
+.form-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.inp {
+  flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 11px 12px; color: var(--text); font-size: 14px; outline: none;
+  transition: border-color .2s;
+}
+.inp:focus { border-color: var(--accent); }
+.inp-emoji { width: 60px; flex: none; text-align: center; font-size: 20px; }
+.inp-price { width: 100px; flex: none; }
+.shake { animation: shake .4s; border-color: var(--red) !important; }
+@keyframes shake {
+  0%,100%{transform:translateX(0)} 20%{transform:translateX(-6px)} 60%{transform:translateX(6px)}
+}
+.btn-add-prod {
+  width: 100%; padding: 12px; border-radius: 9px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), #a78bfa);
+  color: #fff; font-size: 14px; font-weight: 700; transition: opacity .2s, transform .1s;
+}
+.btn-add-prod:active { transform: scale(.98); opacity: .85; }
+.btn-add-prod:disabled { opacity: .5; cursor: not-allowed; }
+
+.item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 0; border-bottom: 1px solid var(--border);
+}
+.item:last-child { border-bottom: none; }
+.item-emoji { font-size: 28px; }
+.item-info { flex: 1; }
+.item-name  { font-size: 14px; font-weight: 600; }
+.item-price { font-size: 13px; color: var(--accent); margin-top: 2px; }
+.btn-del {
+  width: 32px; height: 32px; border-radius: 50%; border: none; cursor: pointer;
+  background: #2a1a1a; color: var(--red); font-size: 12px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .1s;
+}
+.btn-del:active { transform: scale(.87); }
+.empty { color: var(--muted); font-size: 13px; text-align: center; padding: 16px 0; }
+
+/* Toast */
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  padding: 10px 20px; border-radius: 24px; font-size: 13px; font-weight: 600;
+  opacity: 0; transition: opacity .3s, transform .3s; pointer-events: none; white-space: nowrap; z-index: 200;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div id="loader"><div class="spin"></div></div>
+
+<div id="app">
+  <div class="header">
+    <div class="header-icon">⚙️</div>
+    <div class="header-title">Панель администратора</div>
+    <div class="header-badge" id="count">0 товар(ов)</div>
+  </div>
+
+  <div class="scroll">
+
+    <!-- Add product form -->
+    <div class="panel">
+      <div class="panel-title">➕ Добавить товар</div>
+      <div class="form-row">
+        <input id="inp-emoji" class="inp inp-emoji" placeholder="📦" data-ph="📦" maxlength="2"/>
+        <input id="inp-name"  class="inp" placeholder="Название товара" data-ph="Название товара" maxlength="60"/>
+      </div>
+      <div class="form-row">
+        <input id="inp-price" class="inp inp-price" type="number" placeholder="Цена" data-ph="Цена" min="1"/>
+        <span style="color:var(--muted);font-size:14px">₽</span>
+      </div>
+      <button id="btn-add" class="btn-add-prod" onclick="window._addProd()">+ Добавить товар</button>
+    </div>
+
+    <!-- Product list -->
+    <div class="panel">
+      <div class="panel-title">📦 Список товаров</div>
+      <div id="product-list"></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+</body>
+</html>
